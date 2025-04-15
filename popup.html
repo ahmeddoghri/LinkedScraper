@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LinkedIn Scraper</title>
+  <link rel="stylesheet" href="css/popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>LinkedIn Scraper</h1>
+    
+    <div class="control-panel">
+      <button id="scrapeButton" class="button">Scrape Current Page</button>
+      <button id="scrapeAllButton" class="button">Scrape All Pages</button>
+      <button id="downloadButton" class="button" disabled>Download CSV</button>
+    </div>
+    
+    <div class="status-panel">
+      <div id="statusMessage">Ready to scrape.</div>
+      <div id="progressBar" class="progress-bar">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <div id="resultsCount">No results yet.</div>
+    </div>
+  </div>
+  
+  <script src="js/popup.js"></script>
+</body>
+</html> 
