@@ -9,6 +9,10 @@ A Chrome extension that allows you to scrape both regular LinkedIn and LinkedIn 
 - Scrape a single page or all pages of search results
 - Export data to CSV file
 - Simple and easy-to-use interface
+- Advanced profile detection algorithms
+- Data quality validation
+- Real-time progress tracking
+- Debugging information for troubleshooting
 
 ## Installation
 
@@ -46,13 +50,65 @@ A Chrome extension that allows you to scrape both regular LinkedIn and LinkedIn 
 
 The exported CSV file includes the following columns:
 - Name
-- Title
-- Company
+- Title & Company (combined in a single field as "Title at Company")
 - Location
-- Industry
-- Connection Degree
-- Shared Connections
 - Profile URL
+
+## Architecture & Technical Implementation
+
+The extension consists of three main components:
+
+### 1. Popup (UI Controller)
+Located in `popup.html` and `popup.js`, this component:
+- Provides the user interface for the extension
+- Handles user interactions and displays progress/status
+- Communicates with the content script to trigger scraping operations
+- Manages data storage and CSV generation
+- Provides debugging information when issues occur
+
+### 2. Content Script
+Located in `content.js`, this component:
+- Executes directly in the LinkedIn page context
+- Contains sophisticated profile detection algorithms
+- Extracts data from LinkedIn's complex DOM structure
+- Handles navigation between pages during multi-page scraping
+- Adaptively handles different page structures (regular LinkedIn vs Sales Navigator)
+
+### 3. Background Script
+Located in `background.js`, this component:
+- Handles background tasks like file downloads
+- Manages communication between the popup and content script
+
+## Profile Detection System
+
+The extension uses a sophisticated scoring system to identify valid profile cards:
+
+- Scores each potential profile card based on multiple criteria:
+  - Presence of profile links (+3 points)
+  - Text content (+1 point)
+  - Presence of title elements (+2 points)
+  - Card structure indicators (+2 points)
+  - Reasonable element size (+1 point)
+  - Profile image presence (+1 point)
+  - Sales Navigator specific elements (+2 points)
+
+- Uses different thresholds based on page type:
+  - Regular LinkedIn: Minimum score of 3
+  - Sales Navigator: Minimum score of 4
+
+This adaptive scoring system helps the extension reliably identify profile cards even when LinkedIn's page structure changes.
+
+## Data Extraction
+
+The extension extracts profile information using multiple strategies:
+
+- Primary pattern matching for "Title at Company" format
+- Alternative pattern matching for "Title @ Company" format
+- Secondary pattern matching for "Current:" prefixed information
+- Fallback selectors for non-standard formats
+- Structured data extraction from profile cards
+
+Each extraction attempt is logged for debugging purposes, with fallback mechanisms in place when primary extraction methods fail.
 
 ## Supported LinkedIn Page Types
 
@@ -63,6 +119,15 @@ The extension works with regular LinkedIn search pages that match this pattern:
 ### LinkedIn Sales Navigator
 The extension works with Sales Navigator search pages that match this pattern:
 - `https://www.linkedin.com/sales/*`
+
+## Data Quality Validation
+
+The extension validates scraped data for completeness:
+
+- Checks for missing titles, companies, and locations
+- Calculates percentage of profiles with missing data
+- Provides warnings about data quality issues
+- Logs detailed information for troubleshooting
 
 ## Notes
 
@@ -91,7 +156,8 @@ If you've scraped data but the download button remains disabled:
 If the scraper runs but doesn't find any results:
 1. LinkedIn may have updated their page structure. Open the console (F12) to see any error messages
 2. The extension contains multiple selectors to try to adapt to LinkedIn's changes, but sometimes manual updates may be needed
-3. Try running the scraper again after refreshing the page
+3. Try scrolling down to load more profiles before scraping
+4. Make sure you're logged in to LinkedIn properly
 
 #### Extension Not Working At All
 If the extension doesn't work at all:
@@ -105,7 +171,26 @@ For developers who want to debug or modify the extension:
 
 1. Open Chrome DevTools while on the LinkedIn page
 2. Go to the Console tab
-3. Look for log messages beginning with "LinkedIn Scraper:"
+3. Look for log messages from the extension
 4. Error messages will provide details about what's failing
+5. The extension provides detailed logging about:
+   - Profile card detection scores
+   - Data extraction attempts
+   - Selector successes and failures
+   - Data quality issues
 
-You can also inspect the page elements to see if LinkedIn has changed their HTML structure, which may require updating the selectors in `content.js`. 
+You can also inspect the page elements to see if LinkedIn has changed their HTML structure, which may require updating the selectors in `content.js`.
+
+## Future Enhancements
+
+Potential improvements for future versions:
+
+1. Custom field selection for more flexible data extraction
+2. Integration with CRM systems for direct export
+3. Scheduled scraping for automated data collection
+4. Enhanced filtering options for more targeted results
+5. Additional data formats (JSON, Excel) for export
+
+## License
+
+This project is for personal and educational use only. Please respect LinkedIn's terms of service regarding automated data collection. 
