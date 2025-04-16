@@ -78,6 +78,9 @@ function scrapeSinglePage() {
   statusMessage.textContent = 'Scraping page...';
   scrapeButton.disabled = true; // Disable the scrape button during scraping
   
+  // Start with progress bar at 0%
+  updateProgressBar(0);
+  
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     // Make sure the content script is loaded
     chrome.scripting.executeScript({
@@ -94,6 +97,9 @@ function scrapeSinglePage() {
       // Show scraping status with page type
       statusMessage.textContent = `Scraping ${isRegularLinkedIn ? 'regular LinkedIn' : 'Sales Navigator'} page...`;
       
+      // Update progress to 20% after content script is loaded
+      updateProgressBar(20);
+      
       // Now send the message to the content script with the search type
       chrome.tabs.sendMessage(
         tabs[0].id,
@@ -108,10 +114,16 @@ function scrapeSinglePage() {
             console.error('Error scraping page:', chrome.runtime.lastError);
             statusMessage.textContent = 'Error: ' + chrome.runtime.lastError.message;
             
+            // Reset progress bar on error
+            updateProgressBar(0);
+            
             // Show debugging info
             showDebugInfo('Communication error with content script. Try refreshing the page.');
             return;
           }
+          
+          // Update progress to 80% when response is received
+          updateProgressBar(80);
           
           if (response && response.success) {
             scrapedData = response.data;
@@ -122,6 +134,8 @@ function scrapeSinglePage() {
             updateResultsCount();
             
             if (scrapedData.length > 0) {
+              // Fill progress bar to 100% when scraping is successful
+              updateProgressBar(100);
               statusMessage.textContent = 'Scraping completed!';
               downloadButton.disabled = false; // Enable download button
               
@@ -133,10 +147,14 @@ function scrapeSinglePage() {
               // Save data to storage
               chrome.storage.local.set({ scrapedData });
             } else {
+              // Fill progress bar to 100% even when no results are found
+              updateProgressBar(100);
               statusMessage.textContent = 'No results found on this page.';
               showDebugInfo('The scraper ran successfully but found no profiles. This might be due to LinkedIn\'s page structure or selectors not matching.');
             }
           } else {
+            // Reset progress bar on error
+            updateProgressBar(0);
             statusMessage.textContent = 'Failed to scrape page.';
             
             if (response && response.error) {
