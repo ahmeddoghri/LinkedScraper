@@ -391,8 +391,8 @@ function showDebugInfo(debugText) {
 function exportToCSV() {
   if (scrapedData.length === 0) return;
   
-  // Define CSV headers and prepare data
-  const headers = ['Name', 'Title', 'Company', 'Location', 'Industry', 'Connection Degree', 'Shared Connections', 'Profile URL'];
+  // Define CSV headers - combining Title and Company into a single field
+  const headers = ['Name', 'Title & Company', 'Location', 'Connection Degree', 'Profile URL'];
   
   // Log full data for debugging purposes
   console.log('Data to export:', scrapedData);
@@ -432,20 +432,17 @@ function exportToCSV() {
     const name = lead.name || '';
     const title = lead.title || '';
     const company = lead.company || '';
+    // Combine title and company
+    const titleAndCompany = company ? (title ? `${title} at ${company}` : company) : title;
     const location = lead.location || '';
-    const industry = lead.industry || '';
     const connectionDegree = lead.connectionDegree || '';
-    const sharedConnections = lead.sharedConnections || '';
     const profileUrl = lead.profileUrl || '';
     
     const row = [
       escapeCsvField(name),
-      escapeCsvField(title),
-      escapeCsvField(company),
+      escapeCsvField(titleAndCompany),
       escapeCsvField(location),
-      escapeCsvField(industry),
       escapeCsvField(connectionDegree),
-      escapeCsvField(sharedConnections),
       escapeCsvField(profileUrl)
     ];
     
@@ -456,9 +453,11 @@ function exportToCSV() {
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   
-  // Get current date for filename
-  const date = new Date().toISOString().split('T')[0];
-  const filename = `linkedin_leads_${date}.csv`;
+  // Get current date and time for filename
+  const now = new Date();
+  const date = now.toISOString().split('T')[0];
+  const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+  const filename = `linkedin_leads_${date}_${time}.csv`;
   
   // Send download request to background script
   chrome.runtime.sendMessage({

@@ -281,115 +281,160 @@ function scrapeRegularLinkedIn() {
       let company = '';
       let combinedInfo = '';
       
-      // First, check the main headline (which in our example has "Senior Marketing Manager at Intuit")
-      const headlineInfo = extractMainHeadlineInfo(card);
-      if (headlineInfo.title) {
-        title = headlineInfo.title;
-        console.log(`Set title from headline: "${title}"`);
-      }
-      if (headlineInfo.company) {
-        company = headlineInfo.company;
-        console.log(`Set company from headline: "${company}"`);
-      }
+      // First, look for elements with "Current:" text, which often contains the most accurate job info
+      const allElements = card.querySelectorAll('div, p, span');
+      let foundCurrent = false;
       
-      // If we still don't have both title and company, try the Current: section
-      if (!title || !company) {
-        const currentRoleInfo = extractCurrentRoleInfo(card);
-        if (currentRoleInfo.title && !title) {
-          title = currentRoleInfo.title;
-          console.log(`Set title from current role: "${title}"`);
-        }
-        if (currentRoleInfo.company && !company) {
-          company = currentRoleInfo.company;
-          console.log(`Set company from current role: "${company}"`);
-        }
-      }
-      
-      // Next try getting combined title/company text if we didn't get from current role
-      if (!title || !company) {
-        for (const selector of companyAndTitleSelectors) {
-          try {
-            const element = card.querySelector(selector);
-            if (element) {
-              combinedInfo = element.innerText || element.textContent;
-              combinedInfo = combinedInfo.trim();
-              console.log(`Found combined info: "${combinedInfo}" using selector: ${selector}`);
-              break;
+      for (const element of allElements) {
+        const text = element.innerText || element.textContent;
+        if (text && text.trim().startsWith('Current:')) {
+          const currentText = text.trim();
+          console.log(`Found Current text directly: "${currentText}"`);
+          
+          // Extract using pattern "Current: Title at Company"
+          const currentPattern = /Current:\s*(.*?)(?:\s+at\s+|@\s+)(.*?)(?:$|,|\s+\W|and\s+)/i;
+          const currentMatch = currentText.match(currentPattern);
+          
+          if (currentMatch) {
+            title = currentMatch[1].trim();
+            company = currentMatch[2].trim();
+            console.log(`Extracted directly from Current pattern: title="${title}", company="${company}"`);
+            foundCurrent = true;
+            break;
+          }
+          
+          // If no match but we found "Current:", remember the text after the colon
+          const colonPos = currentText.indexOf(':');
+          if (colonPos !== -1) {
+            title = currentText.substring(colonPos + 1).trim();
+            console.log(`Using text after Current: as title: "${title}"`);
+            
+            // Try to extract company if it's in the format "... at Company"
+            const atPos = title.indexOf(' at ');
+            if (atPos !== -1) {
+              company = title.substring(atPos + 4).trim();
+              title = title.substring(0, atPos).trim();
+              console.log(`Split title to get company: title="${title}", company="${company}"`);
             }
-          } catch (error) {
-            console.error(`Error extracting combined info with selector ${selector}:`, error);
+            
+            foundCurrent = true;
+            break;
           }
         }
       }
       
-      // Try to extract title and company from combined info if we didn't get from current role
-      if ((!title || !company) && combinedInfo) {
-        if (combinedInfo.includes(' at ')) {
-          const parts = combinedInfo.split(' at ');
-          if (!title) title = parts[0].trim();
-          if (!company) company = parts[1].trim();
-          console.log(`Split combined info into title: "${title}" and company: "${company}"`);
-        } else if (combinedInfo.includes(' @ ')) {
-          const parts = combinedInfo.split(' @ ');
-          if (!title) title = parts[0].trim();
-          if (!company) company = parts[1].trim();
-          console.log(`Split combined info into title: "${title}" and company: "${company}"`);
-        } else if (combinedInfo.includes(' chez ')) {
-          const parts = combinedInfo.split(' chez ');
-          if (!title) title = parts[0].trim();
-          if (!company) company = parts[1].trim();
-          console.log(`Split combined info into title: "${title}" and company: "${company}"`);
-        } else if (combinedInfo.includes(' - ')) {
-          // Try to handle "Title - Company" format
-          const parts = combinedInfo.split(' - ');
-          if (!title) title = parts[0].trim();
-          if (!company) company = parts[1].trim();
-          console.log(`Split combined info with dash: title: "${title}" and company: "${company}"`);
-        } else {
-          // If not in any known format, use it as the title
-          if (!title) title = combinedInfo;
+      // If we didn't find direct Current: info, try other extraction methods
+      if (!foundCurrent) {
+        // Check the main headline (which often has "Title at Company")
+        const headlineInfo = extractMainHeadlineInfo(card);
+        if (headlineInfo.title) {
+          title = headlineInfo.title;
+          console.log(`Set title from headline: "${title}"`);
         }
-      } 
-      
-      // If we still don't have title or company, try to get them separately
-      if (!title) {
-        for (const selector of titleSelectors) {
-          try {
-            const titleElement = card.querySelector(selector);
-            if (titleElement) {
-              title = titleElement.innerText || titleElement.textContent;
-              title = title.trim();
-              console.log(`Found title: "${title}" using selector: ${selector}`);
-              break;
-            }
-          } catch (error) {
-            console.error(`Error extracting title with selector ${selector}:`, error);
+        if (headlineInfo.company) {
+          company = headlineInfo.company;
+          console.log(`Set company from headline: "${company}"`);
+        }
+        
+        // If we still don't have both title and company, try the Current: section
+        if (!title || !company) {
+          const currentRoleInfo = extractCurrentRoleInfo(card);
+          if (currentRoleInfo.title && !title) {
+            title = currentRoleInfo.title;
+            console.log(`Set title from current role: "${title}"`);
+          }
+          if (currentRoleInfo.company && !company) {
+            company = currentRoleInfo.company;
+            console.log(`Set company from current role: "${company}"`);
           }
         }
-      }
-      
-      if (!company) {
-        for (const selector of companySelectors) {
-          try {
-            const companyElement = card.querySelector(selector);
-            if (companyElement) {
-              company = companyElement.innerText || companyElement.textContent;
-              company = company.trim();
-              console.log(`Found company: "${company}" using selector: ${selector}`);
-              break;
+        
+        // Next try getting combined title/company text if we didn't get from current role
+        if (!title || !company) {
+          for (const selector of companyAndTitleSelectors) {
+            try {
+              const element = card.querySelector(selector);
+              if (element) {
+                combinedInfo = element.innerText || element.textContent;
+                combinedInfo = combinedInfo.trim();
+                console.log(`Found combined info: "${combinedInfo}" using selector: ${selector}`);
+                break;
+              }
+            } catch (error) {
+              console.error(`Error extracting combined info with selector ${selector}:`, error);
             }
-          } catch (error) {
-            console.error(`Error extracting company with selector ${selector}:`, error);
           }
         }
-      }
-      
-      // Check if title contains company info as a last resort
-      if (title && !company && title.includes(' at ')) {
-        const parts = title.split(' at ');
-        title = parts[0].trim();
-        company = parts[1].trim();
-        console.log(`Extracted company from title: title="${title}", company="${company}"`);
+        
+        // Try to extract title and company from combined info
+        if ((!title || !company) && combinedInfo) {
+          if (combinedInfo.includes(' at ')) {
+            const parts = combinedInfo.split(' at ');
+            if (!title) title = parts[0].trim();
+            if (!company) company = parts[1].trim();
+            console.log(`Split combined info into title: "${title}" and company: "${company}"`);
+          } else if (combinedInfo.includes(' @ ')) {
+            const parts = combinedInfo.split(' @ ');
+            if (!title) title = parts[0].trim();
+            if (!company) company = parts[1].trim();
+            console.log(`Split combined info into title: "${title}" and company: "${company}"`);
+          } else if (combinedInfo.includes(' chez ')) {
+            const parts = combinedInfo.split(' chez ');
+            if (!title) title = parts[0].trim();
+            if (!company) company = parts[1].trim();
+            console.log(`Split combined info into title: "${title}" and company: "${company}"`);
+          } else if (combinedInfo.includes(' - ')) {
+            // Try to handle "Title - Company" format
+            const parts = combinedInfo.split(' - ');
+            if (!title) title = parts[0].trim();
+            if (!company) company = parts[1].trim();
+            console.log(`Split combined info with dash: title: "${title}" and company: "${company}"`);
+          } else {
+            // If not in any known format, use it as the title
+            if (!title) title = combinedInfo;
+          }
+        } 
+        
+        // If we still don't have title or company, try to get them separately
+        if (!title) {
+          for (const selector of titleSelectors) {
+            try {
+              const titleElement = card.querySelector(selector);
+              if (titleElement) {
+                title = titleElement.innerText || titleElement.textContent;
+                title = title.trim();
+                console.log(`Found title: "${title}" using selector: ${selector}`);
+                break;
+              }
+            } catch (error) {
+              console.error(`Error extracting title with selector ${selector}:`, error);
+            }
+          }
+        }
+        
+        if (!company) {
+          for (const selector of companySelectors) {
+            try {
+              const companyElement = card.querySelector(selector);
+              if (companyElement) {
+                company = companyElement.innerText || companyElement.textContent;
+                company = company.trim();
+                console.log(`Found company: "${company}" using selector: ${selector}`);
+                break;
+              }
+            } catch (error) {
+              console.error(`Error extracting company with selector ${selector}:`, error);
+            }
+          }
+        }
+        
+        // Check if title contains company info as a last resort
+        if (title && !company && title.includes(' at ')) {
+          const parts = title.split(' at ');
+          title = parts[0].trim();
+          company = parts[1].trim();
+          console.log(`Extracted company from title: title="${title}", company="${company}"`);
+        }
       }
       
       // Extract location
@@ -906,7 +951,7 @@ function extractCurrentRoleInfo(card) {
       
       console.log('Text to analyze for Current info:', textToAnalyze);
       
-      // Specific pattern for the case shown in screenshot: "Current: Senior Marketing Manager: Product Marketing & Sales Enablement at Intuit"
+      // Specific pattern for the case shown in screenshot: "Current: Senior Marketing Manager at Intuit"
       const exactPattern = /Current:\s*Senior\s+Marketing\s+Manager:\s*Product\s+Marketing\s*&\s*Sales\s+Enablement\s+at\s+Intuit/i;
       if (exactPattern.test(textToAnalyze)) {
         console.log('Found exact pattern match for Fiorella at Intuit!');
@@ -1049,6 +1094,33 @@ function extractMainHeadlineInfo(card) {
       '.headline'
     ];
     
+    // First check for the "Current: " pattern as shown in the screenshot
+    const allElements = card.querySelectorAll('div, p, span');
+    for (const element of allElements) {
+      const text = element.innerText || element.textContent;
+      if (text && text.trim().startsWith('Current:')) {
+        const currentText = text.trim();
+        console.log(`Found Current text: "${currentText}"`);
+        
+        // Extract using pattern "Current: Title at Company"
+        const currentPattern = /Current:\s*(.*?)(?:\s+at\s+|@\s+)(.*?)(?:$|,|\s+\W|and\s+)/i;
+        const currentMatch = currentText.match(currentPattern);
+        
+        if (currentMatch) {
+          result.title = currentMatch[1].trim();
+          result.company = currentMatch[2].trim();
+          console.log(`Extracted from Current pattern: title="${result.title}", company="${result.company}"`);
+          return result;
+        }
+        
+        // If we can't parse the pattern, at least use what's after "Current: "
+        result.title = currentText.substring(currentText.indexOf(':') + 1).trim();
+        console.log(`Using text after Current: as title: "${result.title}"`);
+        break;
+      }
+    }
+    
+    // If we didn't find a Current: pattern, proceed with regular headline selectors
     for (const selector of headlineSelectors) {
       try {
         const element = card.querySelector(selector);
@@ -1057,14 +1129,6 @@ function extractMainHeadlineInfo(card) {
           if (headlineText && headlineText.trim()) {
             const text = headlineText.trim();
             console.log(`Found headline text: "${text}" using selector: ${selector}`);
-            
-            // Check specific pattern for the example shown
-            if (text === "Senior Marketing Manager at Intuit") {
-              result.title = "Senior Marketing Manager";
-              result.company = "Intuit";
-              console.log(`Exact match for Fiorella's headline!`);
-              return result;
-            }
             
             // Common pattern: "Job Title at Company"
             if (text.includes(' at ')) {
