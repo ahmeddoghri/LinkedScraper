@@ -150,7 +150,22 @@ function scrapeSinglePage() {
               // Fill progress bar to 100% even when no results are found
               updateProgressBar(100);
               statusMessage.textContent = 'No results found on this page.';
-              showDebugInfo('The scraper ran successfully but found no profiles. This might be due to LinkedIn\'s page structure or selectors not matching.');
+              
+              // Provide more detailed debug info about why no results were found
+              if (response.debug) {
+                showDebugInfo(`The scraper ran but found no profiles. Debug info: ${response.debug}`);
+              } else {
+                showDebugInfo(`
+                  <p>The scraper ran but didn't find any profiles. This might be due to:</p>
+                  <ul>
+                    <li>LinkedIn's page structure has changed</li>
+                    <li>You might need to scroll down to load more profiles</li>
+                    <li>The page might be showing a different view than expected</li>
+                    <li>You might not be logged in to LinkedIn</li>
+                  </ul>
+                  <p>Try refreshing the page or scrolling down to load more profiles before scraping again.</p>
+                `);
+              }
             }
           } else {
             // Reset progress bar on error
@@ -409,29 +424,46 @@ function showDebugInfo(debugText) {
 function exportToCSV() {
   if (scrapedData.length === 0) return;
   
+  // Log sample of data for debugging
+  console.log('Data structure sample:', scrapedData.slice(0, 2));
+  
+  // Log data structure details
+  if (scrapedData.length > 0) {
+    const firstItem = scrapedData[0];
+    console.log('First item properties:', Object.keys(firstItem));
+    console.log('First item values:', firstItem);
+  }
+  
   // Define CSV headers - combining Title and Company into a single field
-  const headers = ['Name', 'Title & Company', 'Location', 'Connection Degree', 'Profile URL'];
+  const headers = ['Name', 'Title & Company', 'Location', 'Profile URL'];
   
   // Log full data for debugging purposes
   console.log('Data to export:', scrapedData);
   
   // Check for specific examples to diagnose
   const diagExample = scrapedData.find(item => 
-    item.name.includes("Fiorella") || 
+    (item.name && item.name.includes("Fiorella")) || 
+    (item.fullName && item.fullName.includes("Fiorella")) ||
     (item.company && item.company.includes("Intuit")) ||
+    (item.companyName && item.companyName.includes("Intuit")) ||
     (item.title && item.title.includes("Marketing Manager"))
   );
   
   if (diagExample) {
     console.log('Found diagnostic example:', diagExample);
-    showDebugInfo(`Found diagnostic example: ${diagExample.name}, Title: "${diagExample.title}", Company: "${diagExample.company}", Location: "${diagExample.location}"`);
+    const name = diagExample.name || diagExample.fullName || 'Unknown';
+    const title = diagExample.title || 'N/A';
+    const company = diagExample.company || diagExample.companyName || 'N/A';
+    const location = diagExample.location || 'N/A';
+    showDebugInfo(`Found diagnostic example: ${name}, Title: "${title}", Company: "${company}", Location: "${location}"`);
   }
   
-  // Check for missing data
+  // Check for missing data - using proper field names and checking field existence
   const missingData = [];
   scrapedData.forEach(lead => {
-    if (!lead.title) missingData.push(`${lead.name} - missing title`);
-    if (!lead.company) missingData.push(`${lead.name} - missing company`);
+    const name = lead.name || lead.fullName || 'Unknown';
+    if (!lead.title && !lead.jobTitle) missingData.push(`${name} - missing title`);
+    if (!lead.company && !lead.companyName) missingData.push(`${name} - missing company`);
   });
   
   if (missingData.length > 0) {
@@ -447,20 +479,18 @@ function exportToCSV() {
   
   scrapedData.forEach(lead => {
     // Ensure each field exists and has a value
-    const name = lead.name || '';
+    const name = lead.name || lead.fullName || '';
     const title = lead.title || '';
-    const company = lead.company || '';
+    const company = lead.company || lead.companyName || '';
     // Combine title and company
     const titleAndCompany = company ? (title ? `${title} at ${company}` : company) : title;
     const location = lead.location || '';
-    const connectionDegree = lead.connectionDegree || '';
     const profileUrl = lead.profileUrl || '';
     
     const row = [
       escapeCsvField(name),
       escapeCsvField(titleAndCompany),
       escapeCsvField(location),
-      escapeCsvField(connectionDegree),
       escapeCsvField(profileUrl)
     ];
     

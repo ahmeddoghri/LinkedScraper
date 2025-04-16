@@ -15,10 +15,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const results = message.isRegularLinkedIn ? 
         scrapeRegularLinkedIn() : scrapeNavigator();
       console.log(`Scraped ${results.length} results from page`);
-      sendResponse({ success: true, data: results });
+      
+      // Collect debug info if no results were found
+      let debugInfo = '';
+      if (results.length === 0) {
+        debugInfo = collectDebugInfo();
+      }
+      
+      sendResponse({ 
+        success: true, 
+        data: results,
+        debug: debugInfo
+      });
     } catch (error) {
       console.error('Error during scraping:', error);
-      sendResponse({ success: false, error: error.message });
+      sendResponse({ 
+        success: false, 
+        error: error.message,
+        debug: collectDebugInfo()
+      });
     }
     return true;
   } else if (message.action === 'getTotalPages') {
@@ -54,84 +69,141 @@ function scrapeRegularLinkedIn() {
   const results = [];
   console.log('Attempting to scrape regular LinkedIn search page');
   
-  // Try different selectors for lead cards on the page based on the latest LinkedIn UI
-  const selectors = [
-    'li.reusable-search__result-container',  // Main selector from screenshot
-    'div.scaffold-finite-scroll__content > div > ul > li', // More generic approach
-    'ul.reusable-search__entity-result-list > li', // Entity result list
-    '.search-results-container > div > ul > li', // General search results
-    'li[data-chameleon-result-urn]',   // Attribute-based selector
-    'li.artdeco-list__item',          // Generic list items
-    '.reusable-search__result-container', // Without li prefix
-    '.entity-result', // Common entity result class
-    'li.search-result', // Another possible result container
-    '.profile-card' // Simple profile card class
+  // Add debug info about the current page
+  const currentUrl = window.location.href;
+  console.log(`Current URL: ${currentUrl}`);
+  dumpPageStructure();
+  
+  // Try to identify the correct search results container first
+  let searchResultsContainer = null;
+  
+  // Latest LinkedIn search structure (as of 2023-2024)
+  const searchContainerSelectors = [
+    '.search-results-container',
+    '.scaffold-layout__main',
+    '.scaffold-finite-scroll__content',
+    'div[data-view-name="search-results-container"]',
+    'div.search-marvel-srp'
   ];
   
-  // Log all attempts for debugging
-  selectors.forEach(selector => {
-    const count = document.querySelectorAll(selector).length;
-    console.log(`Selector "${selector}" found ${count} elements`);
-  });
-  
-  // Find the first selector that works
-  let leadCards = [];
-  for (const selector of selectors) {
-    leadCards = document.querySelectorAll(selector);
-    if (leadCards.length > 0) {
-      console.log(`Found ${leadCards.length} leads using selector: ${selector}`);
+  // Try to find the search results container
+  for (const selector of searchContainerSelectors) {
+    const container = document.querySelector(selector);
+    if (container) {
+      console.log(`Found search results container using selector: ${selector}`);
+      searchResultsContainer = container;
       break;
     }
   }
   
-  // If no selectors work, try a more drastic approach - get all list items that contain profile elements
-  if (leadCards.length === 0) {
-    console.warn('No lead cards found with standard selectors, trying alternative approach');
+  let leadCards = [];
+  
+  // If we found a search container, first try to find results directly within it
+  if (searchResultsContainer) {
+    console.log('Searching for profiles within the identified search container');
     
-    try {
-      // Find all elements that might be profile cards - using try/catch to handle any errors
-      const profileElements = Array.from(document.querySelectorAll('li, div.entity-result, div[role="listitem"], div.profile-card'))
-        .filter(el => {
-          try {
-            // Check if this element contains typical profile elements
-            return (el.querySelector('a[href*="/in/"]') || 
-                   el.textContent.includes('Connect') ||
-                   el.querySelector('img[alt*="profile"]') ||
-                   el.querySelector('[data-control-name="view_profile"]') ||
-                   (el.textContent.includes('degree connection') && el.textContent.includes(' at ')));
-          } catch (error) {
-            console.error('Error in filter function:', error);
-            return false;
-          }
-        });
-      
-      console.log(`Found ${profileElements.length} potential profiles with alternative approach`);
-      
-      if (profileElements.length > 0) {
-        leadCards = profileElements;
-      } else {
-        // One last attempt - try to find any elements with profile links
-        const lastResortElements = document.querySelectorAll('a[href*="/in/"]');
-        if (lastResortElements.length > 0) {
-          console.log(`Found ${lastResortElements.length} profile links as last resort`);
-          // Convert NodeList to Array and map to parent elements that might contain more info
-          leadCards = Array.from(lastResortElements).map(a => a.closest('li') || a.closest('div') || a.parentNode);
-          // Remove duplicates
-          leadCards = [...new Set(leadCards)];
-        } else {
-          console.warn('No lead cards found on page with any method');
-          return results;
-        }
-      }
-    } catch (error) {
-      console.error('Error in alternative approach:', error);
-      // Try directly with very basic selectors as a last resort
-      leadCards = document.querySelectorAll('li.reusable-search__result-container, div.entity-result');
-      if (leadCards.length === 0) {
-        console.warn('Failed to find any lead cards');
-        return results;
+    // Try specific LinkedIn search result selectors within the container
+    const containerSelectors = [
+      'li.reusable-search__result-container',
+      'li.search-result',
+      'li.artdeco-list__item',
+      'div.entity-result',
+      'div.search-entity-result'
+    ];
+    
+    for (const selector of containerSelectors) {
+      const foundCards = searchResultsContainer.querySelectorAll(selector);
+      if (foundCards.length > 0) {
+        console.log(`Found ${foundCards.length} profiles using selector ${selector} within search container`);
+        leadCards = [...leadCards, ...Array.from(foundCards)];
       }
     }
+    
+    // If we found profiles directly in the container, log the count
+    if (leadCards.length > 0) {
+      console.log(`Found a total of ${leadCards.length} profile cards in search container before deduplication`);
+      leadCards = [...new Set(leadCards)];
+      console.log(`Found a total of ${leadCards.length} unique profile cards after deduplication`);
+    } 
+    // If no results found using specific selectors, try to find any divs or list items that might be profile cards
+    else {
+      console.log('No profiles found with specific selectors, trying generic approach in search container');
+      
+      // Look for list items in the search container that might be profile cards
+      const listItems = searchResultsContainer.querySelectorAll('li');
+      console.log(`Found ${listItems.length} list items in search container`);
+      
+      // Filter to only include items that are likely search results
+      for (const item of listItems) {
+        // Check if this list item is likely a search result
+        if (
+          item.querySelector('a[href*="/in/"]') || // Has profile link
+          item.querySelector('img[class*="profile"]') || // Has profile image
+          (item.textContent && item.textContent.includes('connection')) || // Mentions connection
+          item.clientHeight > 60 // Reasonably sized
+        ) {
+          leadCards.push(item);
+        }
+      }
+      
+      console.log(`Found ${leadCards.length} potential profile cards using generic approach`);
+    }
+  }
+  
+  // If we still don't have any lead cards, fall back to the original approach
+  if (leadCards.length === 0) {
+    console.log('No profiles found in search container, falling back to global search');
+    
+    // Try different selectors for lead cards on the page based on the latest LinkedIn UI
+    const selectors = [
+      'li.reusable-search__result-container',  // Main selector from screenshot
+      'div.scaffold-finite-scroll__content > div > ul > li', // More generic approach
+      'ul.reusable-search__entity-result-list > li', // Entity result list
+      '.search-results-container > div > ul > li', // General search results
+      'li[data-chameleon-result-urn]',   // Attribute-based selector
+      'li.artdeco-list__item',          // Generic list items
+      '.reusable-search__result-container', // Without li prefix
+      '.entity-result', // Common entity result class
+      'li.search-result', // Another possible result container
+      '.profile-card', // Simple profile card class
+      // New selectors for better matching
+      '.artdeco-entity-lockup', // Entity lockup component
+      'li.occludable-update', // Occludable update items
+      'div[data-viewport-offset-top]', // Elements with viewport offset
+      'div.relative.ember-view', // Relative ember views
+      'div.artdeco-card', // Artdeco cards
+      'div.feed-shared-update-v2', // Feed updates that might contain profiles
+      'li.feed-item' // Feed items
+    ];
+    
+    // Log all attempts for debugging
+    selectors.forEach(selector => {
+      const count = document.querySelectorAll(selector).length;
+      console.log(`Selector "${selector}" found ${count} elements`);
+    });
+  
+    // Try all selectors and combine results
+    for (const selector of selectors) {
+      const foundCards = document.querySelectorAll(selector);
+      if (foundCards.length > 0) {
+        console.log(`Found ${foundCards.length} leads using selector: ${selector}`);
+        // Add these cards to our collection
+        leadCards = [...leadCards, ...Array.from(foundCards)];
+      }
+    }
+    
+    // Remove duplicate elements that might have been found by multiple selectors
+    if (leadCards.length > 0) {
+      console.log(`Found a total of ${leadCards.length} leads before deduplication`);
+      leadCards = [...new Set(leadCards)];
+      console.log(`Found a total of ${leadCards.length} unique leads after deduplication`);
+    }
+  }
+  
+  // Filter out false positives - elements that don't look like real profile cards
+  if (leadCards.length > 0) {
+    leadCards = filterProfileCards(leadCards);
+    console.log(`Filtered down to ${leadCards.length} likely profile cards`);
   }
   
   // Updated selectors for the latest LinkedIn UI
@@ -150,7 +222,14 @@ function scrapeRegularLinkedIn() {
     '.entity-result__title-text', // Entity title without link
     'h2.profile-card__name', // Profile card name
     '.mb1 a', // List item name
-    'strong.profile-name' // Another name format
+    'strong.profile-name', // Another name format
+    // New selectors for better name extraction
+    '.artdeco-entity-lockup__title span span',
+    'a.app-aware-link[href*="/in/"] span',
+    '.feed-shared-actor__name span',
+    '.update-components-actor__name',
+    '.update-components-actor__meta',
+    '.feed-shared-actor__title'
   ];
   
   const titleSelectors = [
@@ -170,28 +249,6 @@ function scrapeRegularLinkedIn() {
     '.pv-entity__secondary-title', // Secondary title
     'p.job-title', // Simple job title
     'div.profile-info' // Profile info container that might include title
-  ];
-  
-  const currentRoleSelectors = [
-    'div:contains("Current:")', // Using jQuery-like selector
-    '.pv-entity__position-group:contains("Current")',
-    'div[contains(text(), "Current:")]',
-    'div.job-current', 
-    '.current-role',
-    'div.profile-info'
-  ];
-  
-  const companyAndTitleSelectors = [
-    'div.entity-result__primary-subtitle', // Can contain both title and company
-    '.search-result__info p.subline-level-1',
-    '.artdeco-entity-lockup__subtitle', // Entity lockup subtitle
-    '.entity-result__primary-subtitle', // Direct primary subtitle
-    'div.t-14.t-black--light.t-normal', // Generic styling
-    '.profile-card__occupation', // Profile card occupation
-    '.profile-position', // Profile position
-    '.job-info', // Job info
-    'p.job-title', // Job title paragraph
-    'div.profile-info' // Profile info containing both
   ];
   
   const companySelectors = [
@@ -226,19 +283,23 @@ function scrapeRegularLinkedIn() {
     '.profile-location' // Profile location
   ];
   
-  leadCards.forEach((card, index) => {
-    try {
-      console.log(`Processing card ${index + 1}`);
-      
-      // Extract name and profile URL
-      let name = '';
-      let profileUrl = '';
-      for (const selector of nameSelectors) {
-        try {
-          const nameElement = card.querySelector(selector);
-          if (nameElement) {
-            // Get innermost text if there are nested spans
-            name = nameElement.innerText || nameElement.textContent;
+  // Process the lead cards to extract data
+  if (leadCards.length === 0) {
+    console.log('No lead cards found on LinkedIn search page');
+    return results;
+  }
+  
+  console.log(`Starting to extract data from ${leadCards.length} leads`);
+  
+  // Helper functions for extraction
+  function extractName(card) {
+    for (const selector of nameSelectors) {
+      try {
+        const nameElement = card.querySelector(selector);
+        if (nameElement) {
+          // Get innermost text if there are nested spans
+          let name = nameElement.innerText || nameElement.textContent;
+          if (name) {
             name = name.trim();
             
             // Strip out "View X's profile" text if present
@@ -246,204 +307,137 @@ function scrapeRegularLinkedIn() {
               name = name.replace(/View |'s profile/g, '').trim();
             }
             
-            // Get the profile URL - might be on the element or a parent
-            profileUrl = nameElement.href || '';
-            if (!profileUrl && nameElement.closest('a')) {
-              profileUrl = nameElement.closest('a').href || '';
+            return name;
+          }
+        }
+      } catch (error) {
+        console.error(`Error extracting name with selector ${selector}:`, error);
+      }
+    }
+    
+    // If we still don't have a name, try a deeper search in the card
+    try {
+      // Look for any element with an href containing "/in/" which is likely a profile link
+      const possibleLinks = card.querySelectorAll('a[href*="/in/"]');
+      for (const link of possibleLinks) {
+        // Try to get name from the link text
+        let linkText = link.innerText || link.textContent;
+        if (linkText) {
+          linkText = linkText.trim();
+          if (linkText && !linkText.includes('View profile') && linkText.length > 3) {
+            return linkText;
+          }
+        }
+        
+        // If the link itself doesn't have text, check for child span elements
+        const spans = link.querySelectorAll('span');
+        for (const span of spans) {
+          const spanText = span.innerText || span.textContent;
+          if (spanText && spanText.trim() && spanText.length > 3) {
+            return spanText.trim();
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error in deep name search:', error);
+    }
+    
+    return '';
+  }
+  
+  function extractProfileUrl(card) {
+    // Look for a direct link to a profile
+    const profileLinks = card.querySelectorAll('a[href*="/in/"]');
+    for (const link of profileLinks) {
+      if (link.href) {
+        return link.href;
+      }
+    }
+    return '';
+  }
+  
+  function extractTitle(card) {
+    // First check if there's a current role section
+    const currentRoleInfo = extractCurrentRoleInfo(card);
+    if (currentRoleInfo.title) {
+      return currentRoleInfo.title;
+    }
+    
+    // Next, try headline info
+    const headlineInfo = extractMainHeadlineInfo(card);
+    if (headlineInfo.title) {
+      return headlineInfo.title;
+    }
+    
+    // Finally, try direct selectors
+    for (const selector of titleSelectors) {
+      try {
+        const titleElement = card.querySelector(selector);
+        if (titleElement) {
+          let title = titleElement.innerText || titleElement.textContent;
+          if (title) {
+            title = title.trim();
+            
+            // Check if title contains company information
+            if (title.includes(' at ')) {
+              return title.split(' at ')[0].trim();
             }
             
-            console.log(`Found name: "${name}" using selector: ${selector}`);
-            break;
+            return title;
           }
-        } catch (error) {
-          console.error(`Error extracting name with selector ${selector}:`, error);
         }
+      } catch (error) {
+        console.error(`Error extracting title with selector ${selector}:`, error);
       }
-      
-      // Try to extract the raw text content if the selectors failed
-      if (!name) {
-        try {
-          const possibleNameElement = card.querySelector('a[href*="/in/"]');
-          if (possibleNameElement) {
-            name = possibleNameElement.innerText || possibleNameElement.textContent;
-            name = name.trim();
-            profileUrl = possibleNameElement.href || '';
-            console.log(`Found name with fallback method: "${name}"`);
+    }
+    
+    return '';
+  }
+  
+  function extractCompany(card) {
+    // First check if there's a current role section
+    const currentRoleInfo = extractCurrentRoleInfo(card);
+    if (currentRoleInfo.company) {
+      return currentRoleInfo.company;
+    }
+    
+    // Next, try headline info
+    const headlineInfo = extractMainHeadlineInfo(card);
+    if (headlineInfo.company) {
+      return headlineInfo.company;
+    }
+    
+    // Check if title contains company information
+    const title = extractTitle(card);
+    if (title && title.includes(' at ')) {
+      return title.split(' at ')[1].trim();
+    }
+    
+    // Finally, try direct selectors
+    for (const selector of companySelectors) {
+      try {
+        const companyElement = card.querySelector(selector);
+        if (companyElement) {
+          let company = companyElement.innerText || companyElement.textContent;
+          if (company) {
+            return company.trim();
           }
-        } catch (error) {
-          console.error('Error in fallback name extraction:', error);
         }
+      } catch (error) {
+        console.error(`Error extracting company with selector ${selector}:`, error);
       }
-      
-      // Extract title and company
-      // In regular LinkedIn, these are often in the same element or nearby elements
-      let title = '';
-      let company = '';
-      let combinedInfo = '';
-      
-      // First, look for elements with "Current:" text, which often contains the most accurate job info
-      const allElements = card.querySelectorAll('div, p, span');
-      let foundCurrent = false;
-      
-      for (const element of allElements) {
-        const text = element.innerText || element.textContent;
-        if (text && text.trim().startsWith('Current:')) {
-          const currentText = text.trim();
-          console.log(`Found Current text directly: "${currentText}"`);
-          
-          // Extract using pattern "Current: Title at Company"
-          const currentPattern = /Current:\s*(.*?)(?:\s+at\s+|@\s+)(.*?)(?:$|,|\s+\W|and\s+)/i;
-          const currentMatch = currentText.match(currentPattern);
-          
-          if (currentMatch) {
-            title = currentMatch[1].trim();
-            company = currentMatch[2].trim();
-            console.log(`Extracted directly from Current pattern: title="${title}", company="${company}"`);
-            foundCurrent = true;
-            break;
-          }
-          
-          // If no match but we found "Current:", remember the text after the colon
-          const colonPos = currentText.indexOf(':');
-          if (colonPos !== -1) {
-            title = currentText.substring(colonPos + 1).trim();
-            console.log(`Using text after Current: as title: "${title}"`);
-            
-            // Try to extract company if it's in the format "... at Company"
-            const atPos = title.indexOf(' at ');
-            if (atPos !== -1) {
-              company = title.substring(atPos + 4).trim();
-              title = title.substring(0, atPos).trim();
-              console.log(`Split title to get company: title="${title}", company="${company}"`);
-            }
-            
-            foundCurrent = true;
-            break;
-          }
-        }
-      }
-      
-      // If we didn't find direct Current: info, try other extraction methods
-      if (!foundCurrent) {
-        // Check the main headline (which often has "Title at Company")
-        const headlineInfo = extractMainHeadlineInfo(card);
-        if (headlineInfo.title) {
-          title = headlineInfo.title;
-          console.log(`Set title from headline: "${title}"`);
-        }
-        if (headlineInfo.company) {
-          company = headlineInfo.company;
-          console.log(`Set company from headline: "${company}"`);
-        }
-        
-        // If we still don't have both title and company, try the Current: section
-        if (!title || !company) {
-          const currentRoleInfo = extractCurrentRoleInfo(card);
-          if (currentRoleInfo.title && !title) {
-            title = currentRoleInfo.title;
-            console.log(`Set title from current role: "${title}"`);
-          }
-          if (currentRoleInfo.company && !company) {
-            company = currentRoleInfo.company;
-            console.log(`Set company from current role: "${company}"`);
-          }
-        }
-        
-        // Next try getting combined title/company text if we didn't get from current role
-        if (!title || !company) {
-          for (const selector of companyAndTitleSelectors) {
-            try {
-              const element = card.querySelector(selector);
-              if (element) {
-                combinedInfo = element.innerText || element.textContent;
-                combinedInfo = combinedInfo.trim();
-                console.log(`Found combined info: "${combinedInfo}" using selector: ${selector}`);
-                break;
-              }
-            } catch (error) {
-              console.error(`Error extracting combined info with selector ${selector}:`, error);
-            }
-          }
-        }
-        
-        // Try to extract title and company from combined info
-        if ((!title || !company) && combinedInfo) {
-          if (combinedInfo.includes(' at ')) {
-            const parts = combinedInfo.split(' at ');
-            if (!title) title = parts[0].trim();
-            if (!company) company = parts[1].trim();
-            console.log(`Split combined info into title: "${title}" and company: "${company}"`);
-          } else if (combinedInfo.includes(' @ ')) {
-            const parts = combinedInfo.split(' @ ');
-            if (!title) title = parts[0].trim();
-            if (!company) company = parts[1].trim();
-            console.log(`Split combined info into title: "${title}" and company: "${company}"`);
-          } else if (combinedInfo.includes(' chez ')) {
-            const parts = combinedInfo.split(' chez ');
-            if (!title) title = parts[0].trim();
-            if (!company) company = parts[1].trim();
-            console.log(`Split combined info into title: "${title}" and company: "${company}"`);
-          } else if (combinedInfo.includes(' - ')) {
-            // Try to handle "Title - Company" format
-            const parts = combinedInfo.split(' - ');
-            if (!title) title = parts[0].trim();
-            if (!company) company = parts[1].trim();
-            console.log(`Split combined info with dash: title: "${title}" and company: "${company}"`);
-          } else {
-            // If not in any known format, use it as the title
-            if (!title) title = combinedInfo;
-          }
-        } 
-        
-        // If we still don't have title or company, try to get them separately
-        if (!title) {
-          for (const selector of titleSelectors) {
-            try {
-              const titleElement = card.querySelector(selector);
-              if (titleElement) {
-                title = titleElement.innerText || titleElement.textContent;
-                title = title.trim();
-                console.log(`Found title: "${title}" using selector: ${selector}`);
-                break;
-              }
-            } catch (error) {
-              console.error(`Error extracting title with selector ${selector}:`, error);
-            }
-          }
-        }
-        
-        if (!company) {
-          for (const selector of companySelectors) {
-            try {
-              const companyElement = card.querySelector(selector);
-              if (companyElement) {
-                company = companyElement.innerText || companyElement.textContent;
-                company = company.trim();
-                console.log(`Found company: "${company}" using selector: ${selector}`);
-                break;
-              }
-            } catch (error) {
-              console.error(`Error extracting company with selector ${selector}:`, error);
-            }
-          }
-        }
-        
-        // Check if title contains company info as a last resort
-        if (title && !company && title.includes(' at ')) {
-          const parts = title.split(' at ');
-          title = parts[0].trim();
-          company = parts[1].trim();
-          console.log(`Extracted company from title: title="${title}", company="${company}"`);
-        }
-      }
-      
-      // Extract location
-      let location = '';
-      for (const selector of locationSelectors) {
-        try {
-          const locationElement = card.querySelector(selector);
-          if (locationElement) {
-            location = locationElement.innerText || locationElement.textContent;
+    }
+    
+    return '';
+  }
+  
+  function extractLocation(card) {
+    for (const selector of locationSelectors) {
+      try {
+        const locationElement = card.querySelector(selector);
+        if (locationElement) {
+          let location = locationElement.innerText || locationElement.textContent;
+          if (location) {
             location = location.trim();
             
             // Clean up location if needed (remove any "Location: " prefix)
@@ -451,68 +445,70 @@ function scrapeRegularLinkedIn() {
               location = location.substring('Location:'.length).trim();
             }
             
-            console.log(`Found location: "${location}" using selector: ${selector}`);
-            break;
+            return location;
           }
-        } catch (error) {
-          console.error(`Error extracting location with selector ${selector}:`, error);
         }
+      } catch (error) {
+        console.error(`Error extracting location with selector ${selector}:`, error);
       }
-      
-      // If we still don't have a location, try a more direct approach
-      if (!location) {
-        try {
-          // Look for any text that fits location patterns (e.g., "City, State" or "City, Country")
-          const allParas = card.querySelectorAll('p, div');
-          for (const para of allParas) {
-            const text = para.innerText || para.textContent;
-            // Simple pattern matching for locations: typically City, State or City, Country
-            if (/^[A-Za-z\s]+, [A-Za-z\s]+$/.test(text) && text.length < 50) {
-              location = text.trim();
-              console.log(`Found location through pattern matching: "${location}"`);
-              break;
-            }
-            
-            // Check for one-word countries (like "Canada" in the example)
-            if (/^(Canada|Australia|England|France|Germany|Japan|Brazil|Mexico|Israel|India|China|Russia)$/.test(text)) {
-              location = text.trim();
-              console.log(`Found country location: "${location}"`);
-              break;
-            }
-          }
-        } catch (error) {
-          console.error('Error in location pattern matching:', error);
+    }
+    
+    // If we still don't have a location, try a more direct approach
+    try {
+      // Look for any text that fits location patterns (e.g., "City, State" or "City, Country")
+      const allParas = card.querySelectorAll('p, div');
+      for (const para of allParas) {
+        const text = para.innerText || para.textContent;
+        // Simple pattern matching for locations: typically City, State or City, Country
+        if (/^[A-Za-z\s]+, [A-Za-z\s]+$/.test(text) && text.length < 50) {
+          return text.trim();
         }
-      }
-      
-      // Get industry - usually harder to get precisely in regular search
-      let industry = '';
-      
-      // Extract connection info
-      const connectionDegree = extractConnectionDegree(card);
-      const sharedConnections = extractSharedConnections(card);
-      
-      if (name) { // Only add lead if we at least have a name
-        results.push({
-          name,
-          profileUrl,
-          title,
-          company,
-          location,
-          industry,
-          connectionDegree,
-          sharedConnections
-        });
-        console.log(`Added profile for: ${name}`);
-      } else {
-        console.warn(`Skipping profile at index ${index} - no name found`);
+        
+        // Check for one-word countries
+        if (/^(Canada|Australia|England|France|Germany|Japan|Brazil|Mexico|Israel|India|China|Russia)$/.test(text)) {
+          return text.trim();
+        }
       }
     } catch (error) {
-      console.error(`Error scraping lead card at index ${index}:`, error);
+      console.error('Error in location pattern matching:', error);
     }
-  });
+    
+    return '';
+  }
   
-  console.log(`Total profiles scraped: ${results.length}`);
+  // Process each lead to extract the required information
+  for (let leadCard of leadCards) {
+    try {
+      const leadObject = {};
+      
+      // Name 
+      leadObject.fullName = extractName(leadCard);
+      
+      // Title
+      leadObject.title = extractTitle(leadCard);
+      
+      // Location
+      leadObject.location = extractLocation(leadCard);
+      
+      // Profile URL - Look for links containing /in/ which indicates a LinkedIn profile URL
+      leadObject.profileUrl = extractProfileUrl(leadCard);
+      
+      // Company
+      leadObject.companyName = extractCompany(leadCard);
+      
+      // Only add if we have at least a name or profile URL
+      if (leadObject.fullName || leadObject.profileUrl) {
+        console.log('Extracted lead:', leadObject);
+        results.push(leadObject);
+      } else {
+        console.log('Skipping lead with no name or profile URL');
+      }
+    } catch (error) {
+      console.error('Error processing lead card:', error);
+    }
+  }
+  
+  console.log(`Successfully extracted ${results.length} leads from regular LinkedIn search`);
   return results;
 }
 
@@ -536,11 +532,23 @@ function scrapeNavigator() {
   // Find the first selector that works
   let leadCards = [];
   for (const selector of selectors) {
-    leadCards = document.querySelectorAll(selector);
-    if (leadCards.length > 0) {
-      console.log(`Found ${leadCards.length} leads using selector: ${selector}`);
-      break;
+    const foundCards = document.querySelectorAll(selector);
+    if (foundCards.length > 0) {
+      console.log(`Found ${foundCards.length} leads using selector: ${selector}`);
+      // Add these cards to our collection instead of breaking
+      leadCards = [...leadCards, ...Array.from(foundCards)];
     }
+  }
+  
+  // Remove duplicate elements that might have been found by multiple selectors
+  if (leadCards.length > 0) {
+    console.log(`Found a total of ${leadCards.length} leads before deduplication`);
+    leadCards = [...new Set(leadCards)];
+    console.log(`Found a total of ${leadCards.length} unique leads after deduplication`);
+    
+    // Filter out false positives - elements that don't look like real profile cards
+    leadCards = filterProfileCards(leadCards);
+    console.log(`Filtered down to ${leadCards.length} likely profile cards`);
   }
   
   if (leadCards.length === 0) {
@@ -1201,4 +1209,173 @@ function extractMainHeadlineInfo(card) {
   }
   
   return result;
+}
+
+/**
+ * Dumps basic page structure info to help diagnose scraping issues
+ */
+function dumpPageStructure() {
+  try {
+    console.log('---------- PAGE STRUCTURE ANALYSIS ----------');
+    
+    // Log the page title
+    console.log(`Page title: ${document.title}`);
+    
+    // Check for common LinkedIn page elements
+    const searchContainer = document.querySelector('.search-results-container');
+    console.log(`Search results container present: ${!!searchContainer}`);
+    
+    const scaffoldContent = document.querySelector('.scaffold-finite-scroll__content');
+    console.log(`Scaffold finite scroll content present: ${!!scaffoldContent}`);
+    
+    const searchResultList = document.querySelector('.reusable-search__entity-result-list');
+    console.log(`Search result list present: ${!!searchResultList}`);
+    
+    // Check for profile cards/results
+    const profileLinks = document.querySelectorAll('a[href*="/in/"]');
+    console.log(`Profile links found: ${profileLinks.length}`);
+    
+    // Check for pagination
+    const pagination = document.querySelector('.artdeco-pagination');
+    console.log(`Pagination present: ${!!pagination}`);
+    
+    // Check if the page might be requiring login
+    const loginForm = document.querySelector('form[action*="login"], form[action*="checkpoint"]');
+    console.log(`Login form present: ${!!loginForm}`);
+    
+    // Check for error messages
+    const errorMessages = document.querySelectorAll('.error, .alert, .notification');
+    console.log(`Error messages found: ${errorMessages.length}`);
+    
+    // List main container classes to help identify structure
+    console.log('Main containers:');
+    const mainContainers = document.querySelectorAll('body > div, body > main, #app, #main, .application-outlet');
+    mainContainers.forEach((container, i) => {
+      const classes = container.className;
+      const id = container.id;
+      console.log(`Container ${i+1}: ${id ? `id="${id}"` : ''} ${classes ? `class="${classes}"` : ''}`);
+    });
+    
+    // Get high-level structure of the page
+    const bodyChildCount = document.body.children.length;
+    console.log(`Body has ${bodyChildCount} direct children`);
+    
+    // Check for iframes that might contain the content
+    const iframes = document.querySelectorAll('iframe');
+    console.log(`Iframes found: ${iframes.length}`);
+    
+    // Check for potential lazy-loading or infinite scroll indicators
+    const spinners = document.querySelectorAll('.loading, .spinner, [class*="loader"], [class*="loading"]');
+    console.log(`Loading indicators found: ${spinners.length}`);
+    
+    console.log('---------- END PAGE STRUCTURE ANALYSIS ----------');
+  } catch (error) {
+    console.error('Error dumping page structure:', error);
+  }
+}
+
+/**
+ * Collects debug information to help diagnose scraping issues
+ * @returns {string} Debug information
+ */
+function collectDebugInfo() {
+  try {
+    const debugParts = [];
+    
+    // Get URL
+    debugParts.push(`URL: ${window.location.href}`);
+    
+    // Check if we're on a valid LinkedIn page
+    const onLinkedIn = window.location.href.includes('linkedin.com');
+    debugParts.push(`On LinkedIn: ${onLinkedIn}`);
+    
+    // Check login status
+    const loggedIn = !document.querySelector('a[href*="login"], form[action*="login"]');
+    debugParts.push(`Appears logged in: ${loggedIn}`);
+    
+    // Check for common LinkedIn page elements
+    const hasSearchResults = !!document.querySelector('.search-results-container, .scaffold-finite-scroll__content');
+    debugParts.push(`Has search results container: ${hasSearchResults}`);
+    
+    // Check profile links
+    const profileLinkCount = document.querySelectorAll('a[href*="/in/"]').length;
+    debugParts.push(`Profile links found: ${profileLinkCount}`);
+    
+    // Check if page is likely still loading
+    const hasLoadingIndicators = document.querySelectorAll('.loading, .spinner, [class*="loader"]').length > 0;
+    debugParts.push(`Page shows loading indicators: ${hasLoadingIndicators}`);
+    
+    // Check if content might be in iframes (rare but possible)
+    const hasIframes = document.querySelectorAll('iframe').length > 0;
+    debugParts.push(`Page has iframes: ${hasIframes}`);
+    
+    // Get page scroll info
+    const scrollInfo = {
+      scrollHeight: document.documentElement.scrollHeight,
+      clientHeight: document.documentElement.clientHeight,
+      scrollTop: document.documentElement.scrollTop
+    };
+    const scrollPercent = Math.round((scrollInfo.scrollTop / (scrollInfo.scrollHeight - scrollInfo.clientHeight)) * 100) || 0;
+    debugParts.push(`Page scroll position: ${scrollPercent}% (${scrollInfo.scrollTop}px/${scrollInfo.scrollHeight}px)`);
+    
+    return debugParts.join(' | ');
+  } catch (error) {
+    console.error('Error collecting debug info:', error);
+    return `Error collecting debug info: ${error.message}`;
+  }
+}
+
+/**
+ * Filters a list of elements to include only those that are likely to be actual profile cards
+ * @param {Array} elements List of DOM elements to filter
+ * @returns {Array} Filtered list containing only likely profile cards
+ */
+function filterProfileCards(elements) {
+  return Array.from(elements).filter(card => {
+    try {
+      // Check if the card contains elements we'd expect in a profile card
+      
+      // 1. Should have a link to a profile
+      const hasProfileLink = !!card.querySelector('a[href*="/in/"]');
+      
+      // 2. Should have at least some text content
+      const hasText = card.textContent && card.textContent.trim().length > 20;
+      
+      // 3. Should have some structure - look for typical elements in profile cards
+      const hasTitleElement = !!card.querySelector('[class*="subtitle"], [class*="headline"], [class*="title"]');
+      
+      // 4. Should have certain classes or tags that indicate it's a card
+      const hasCardStructure = 
+        card.tagName === 'LI' || 
+        card.classList.contains('entity-result') || 
+        card.classList.contains('artdeco-entity-lockup') ||
+        card.classList.contains('search-result') ||
+        card.classList.contains('reusable-search__result-container') ||
+        card.classList.contains('artdeco-card');
+      
+      // 5. Should not be too small
+      const hasReasonableSize = card.clientHeight > 40 && card.clientWidth > 50;
+      
+      // 6. Should have an image (like a profile picture) or some structured data
+      const hasProfileImage = !!card.querySelector('img');
+      
+      // Calculate a score based on these factors - the higher the score, the more likely it's a profile card
+      let score = 0;
+      if (hasProfileLink) score += 3;
+      if (hasText) score += 1;
+      if (hasTitleElement) score += 2;
+      if (hasCardStructure) score += 2;
+      if (hasReasonableSize) score += 1;
+      if (hasProfileImage) score += 1;
+      
+      // Log the details for debugging purposes
+      console.log(`Card score: ${score}/10, hasProfileLink: ${hasProfileLink}, hasTitleElement: ${hasTitleElement}, hasCardStructure: ${hasCardStructure}`);
+      
+      // Require a minimum score to consider this a profile card
+      return score >= 3;
+    } catch (error) {
+      console.error('Error filtering profile card:', error);
+      return false;
+    }
+  });
 } 
